@@ -6,7 +6,19 @@ const KEYS = {
   CONFESSIONS: "whispr_confessions",
   CRUSHES: "whispr_crushes",
   MARKETPLACE: "whispr_marketplace",
-  REACTIONS: "whispr_reactions",
+};
+
+const LIMITS = {
+  MAX_CONFESSIONS: 200,
+  MAX_CRUSHES: 100,
+  MAX_MARKET_ITEMS: 150,
+  MAX_CONFESSION_LENGTH: 500,
+  MAX_CRUSH_MESSAGE_LENGTH: 200,
+  MAX_TITLE_LENGTH: 100,
+  MAX_DESCRIPTION_LENGTH: 300,
+  MIN_PRICE: 0,
+  MAX_PRICE: 99999,
+  REACTION_COOLDOWN_MS: 500,
 };
 
 export interface UserProfile {
@@ -19,6 +31,7 @@ export interface UserProfile {
   crushesSent: number;
   matchesRevealed: number;
   createdAt: string;
+  lastReactionAt: string;
 }
 
 export interface Confession {
@@ -109,6 +122,7 @@ export function getTimeSince(dateStr: string): string {
   const now = new Date();
   const date = new Date(dateStr);
   const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (seconds < 0) return "just now";
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
@@ -119,9 +133,29 @@ export function getTimeSince(dateStr: string): string {
   return `${Math.floor(days / 7)}w`;
 }
 
+function sanitizeText(text: string, maxLength: number): string {
+  return text.trim().slice(0, maxLength);
+}
+
+function validatePrice(price: number): number {
+  if (!Number.isFinite(price) || price < LIMITS.MIN_PRICE) return 0;
+  if (price > LIMITS.MAX_PRICE) return LIMITS.MAX_PRICE;
+  return Math.round(price * 100) / 100;
+}
+
+function isReactionCooldownActive(lastReactionAt: string): boolean {
+  const now = Date.now();
+  const last = new Date(lastReactionAt).getTime();
+  return now - last < LIMITS.REACTION_COOLDOWN_MS;
+}
+
 export async function getUserProfile(): Promise<UserProfile | null> {
-  const data = await AsyncStorage.getItem(KEYS.USER_PROFILE);
-  return data ? JSON.parse(data) : null;
+  try {
+    const data = await AsyncStorage.getItem(KEYS.USER_PROFILE);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function createUserProfile(): Promise<UserProfile> {
@@ -135,6 +169,7 @@ export async function createUserProfile(): Promise<UserProfile> {
     crushesSent: 0,
     matchesRevealed: 0,
     createdAt: new Date().toISOString(),
+    lastReactionAt: new Date(0).toISOString(),
   };
   await AsyncStorage.setItem(KEYS.USER_PROFILE, JSON.stringify(profile));
   return profile;
@@ -144,67 +179,153 @@ export async function updateUserProfile(updates: Partial<UserProfile>): Promise<
   const current = await getUserProfile();
   if (!current) throw new Error("No profile found");
   const updated = { ...current, ...updates };
+  if (updated.karma < 0) updated.karma = 0;
+  await AsyncStorage.setItem(KEYS.USER_PROFILE, JSON.stringify(updated));
+  return updated;
+}
+
+export async function regenerateAlias(): Promise<UserProfile> {
+  const current = await getUserProfile();
+  if (!current) throw new Error("No profile found");
+  let newAlias = getRandomAlias();
+  while (newAlias === current.alias) {
+    newAlias = getRandomAlias();
+  }
+  const updated = {
+    ...current,
+    alias: newAlias,
+    avatarIndex: getRandomAvatarIndex(),
+  };
   await AsyncStorage.setItem(KEYS.USER_PROFILE, JSON.stringify(updated));
   return updated;
 }
 
 export async function getConfessions(): Promise<Confession[]> {
-  const data = await AsyncStorage.getItem(KEYS.CONFESSIONS);
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = await AsyncStorage.getItem(KEYS.CONFESSIONS);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
 }
 
-export async function addConfession(confession: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">): Promise<Confession> {
+export async function addConfession(confession: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">): Promise<Confession | null> {
+  const sanitizedContent = sanitizeText(confession.content, LIMITS.MAX_CONFESSION_LENGTH);
+  if (sanitizedContent.length < 3) return null;
+
   const confessions = await getConfessions();
   const newConfession: Confession = {
     ...confession,
+    content: sanitizedContent,
     id: generateId(),
     reactions: { fire: [], heart: [], laugh: [], shock: [], sad: [] },
     commentCount: 0,
     createdAt: new Date().toISOString(),
   };
   confessions.unshift(newConfession);
+
+  if (confessions.length > LIMITS.MAX_CONFESSIONS) {
+    confessions.splice(LIMITS.MAX_CONFESSIONS);
+  }
+
   await AsyncStorage.setItem(KEYS.CONFESSIONS, JSON.stringify(confessions));
   return newConfession;
+}
+
+export async function deleteConfession(confessionId: string, userId: string): Promise<Confession[]> {
+  const confessions = await getConfessions();
+  const filtered = confessions.filter((c) => !(c.id === confessionId && c.authorId === userId));
+  await AsyncStorage.setItem(KEYS.CONFESSIONS, JSON.stringify(filtered));
+  return filtered;
 }
 
 export async function toggleReaction(
   confessionId: string,
   userId: string,
   reactionType: keyof Confession["reactions"]
-): Promise<Confession[]> {
+): Promise<{ confessions: Confession[]; added: boolean }> {
+  const profile = await getUserProfile();
+  if (profile && isReactionCooldownActive(profile.lastReactionAt)) {
+    const confessions = await getConfessions();
+    const confession = confessions.find((c) => c.id === confessionId);
+    const isActive = confession?.reactions[reactionType].includes(userId) ?? false;
+    return { confessions, added: isActive };
+  }
+
   const confessions = await getConfessions();
   const index = confessions.findIndex((c) => c.id === confessionId);
-  if (index === -1) return confessions;
+  if (index === -1) return { confessions, added: false };
 
   const confession = confessions[index];
+
+  if (confession.authorId === userId) {
+    return { confessions, added: false };
+  }
+
   const userIndex = confession.reactions[reactionType].indexOf(userId);
+  let added = false;
   if (userIndex === -1) {
     confession.reactions[reactionType].push(userId);
+    added = true;
   } else {
     confession.reactions[reactionType].splice(userIndex, 1);
+    added = false;
   }
   confessions[index] = confession;
   await AsyncStorage.setItem(KEYS.CONFESSIONS, JSON.stringify(confessions));
-  return confessions;
+
+  if (profile) {
+    await updateUserProfile({ lastReactionAt: new Date().toISOString() });
+  }
+
+  return { confessions, added };
 }
 
 export async function getCrushes(): Promise<Crush[]> {
-  const data = await AsyncStorage.getItem(KEYS.CRUSHES);
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = await AsyncStorage.getItem(KEYS.CRUSHES);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
 }
 
-export async function sendCrush(crush: Omit<Crush, "id" | "createdAt" | "isRevealed" | "isMutual">): Promise<Crush> {
+export async function sendCrush(crush: Omit<Crush, "id" | "createdAt" | "isRevealed" | "isMutual">): Promise<Crush | null> {
+  const sanitizedAlias = sanitizeText(crush.toAlias, 30);
+  const sanitizedMessage = sanitizeText(crush.message, LIMITS.MAX_CRUSH_MESSAGE_LENGTH);
+  if (sanitizedAlias.length < 2) return null;
+
   const crushes = await getCrushes();
+
+  const alreadyCrushed = crushes.some(
+    (c) => c.fromUserId === crush.fromUserId && c.toAlias.toLowerCase() === sanitizedAlias.toLowerCase()
+  );
+  if (alreadyCrushed) return null;
+
   const newCrush: Crush = {
     ...crush,
+    toAlias: sanitizedAlias,
+    message: sanitizedMessage,
     id: generateId(),
     isRevealed: false,
     isMutual: Math.random() > 0.6,
     createdAt: new Date().toISOString(),
   };
   crushes.unshift(newCrush);
+
+  if (crushes.length > LIMITS.MAX_CRUSHES) {
+    crushes.splice(LIMITS.MAX_CRUSHES);
+  }
+
   await AsyncStorage.setItem(KEYS.CRUSHES, JSON.stringify(crushes));
   return newCrush;
+}
+
+export async function deleteCrush(crushId: string, userId: string): Promise<Crush[]> {
+  const crushes = await getCrushes();
+  const filtered = crushes.filter((c) => !(c.id === crushId && c.fromUserId === userId));
+  await AsyncStorage.setItem(KEYS.CRUSHES, JSON.stringify(filtered));
+  return filtered;
 }
 
 export async function revealCrush(crushId: string): Promise<Crush[]> {
@@ -218,34 +339,60 @@ export async function revealCrush(crushId: string): Promise<Crush[]> {
 }
 
 export async function getMarketItems(): Promise<MarketItem[]> {
-  const data = await AsyncStorage.getItem(KEYS.MARKETPLACE);
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = await AsyncStorage.getItem(KEYS.MARKETPLACE);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
 }
 
-export async function addMarketItem(item: Omit<MarketItem, "id" | "createdAt" | "isSold">): Promise<MarketItem> {
+export async function addMarketItem(item: Omit<MarketItem, "id" | "createdAt" | "isSold">): Promise<MarketItem | null> {
+  const sanitizedTitle = sanitizeText(item.title, LIMITS.MAX_TITLE_LENGTH);
+  const sanitizedDesc = sanitizeText(item.description, LIMITS.MAX_DESCRIPTION_LENGTH);
+  const validatedPrice = validatePrice(item.price);
+
+  if (sanitizedTitle.length < 3) return null;
+  if (validatedPrice <= 0) return null;
+
   const items = await getMarketItems();
   const newItem: MarketItem = {
     ...item,
+    title: sanitizedTitle,
+    description: sanitizedDesc,
+    price: validatedPrice,
     id: generateId(),
     isSold: false,
     createdAt: new Date().toISOString(),
   };
   items.unshift(newItem);
+
+  if (items.length > LIMITS.MAX_MARKET_ITEMS) {
+    items.splice(LIMITS.MAX_MARKET_ITEMS);
+  }
+
   await AsyncStorage.setItem(KEYS.MARKETPLACE, JSON.stringify(items));
   return newItem;
 }
 
-export async function toggleSold(itemId: string): Promise<MarketItem[]> {
+export async function deleteMarketItem(itemId: string, userId: string): Promise<MarketItem[]> {
+  const items = await getMarketItems();
+  const filtered = items.filter((i) => !(i.id === itemId && i.sellerId === userId));
+  await AsyncStorage.setItem(KEYS.MARKETPLACE, JSON.stringify(filtered));
+  return filtered;
+}
+
+export async function toggleSold(itemId: string, userId: string): Promise<MarketItem[]> {
   const items = await getMarketItems();
   const index = items.findIndex((i) => i.id === itemId);
-  if (index !== -1) {
+  if (index !== -1 && items[index].sellerId === userId) {
     items[index].isSold = !items[index].isSold;
   }
   await AsyncStorage.setItem(KEYS.MARKETPLACE, JSON.stringify(items));
   return items;
 }
 
-export async function seedSampleData(userId: string, alias: string, avatarIndex: number, karma: number): Promise<void> {
+export async function seedSampleData(): Promise<void> {
   const existingConfessions = await getConfessions();
   if (existingConfessions.length > 0) return;
 

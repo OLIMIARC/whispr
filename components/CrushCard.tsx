@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withSpring, withSequence } from "react-native-reanimated";
@@ -9,9 +9,10 @@ import { Crush, getTimeSince } from "@/lib/storage";
 interface CrushCardProps {
   crush: Crush;
   onReveal: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
-export default function CrushCard({ crush, onReveal }: CrushCardProps) {
+export default function CrushCard({ crush, onReveal, onDelete }: CrushCardProps) {
   const scale = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -25,6 +26,17 @@ export default function CrushCard({ crush, onReveal }: CrushCardProps) {
       withSpring(1)
     );
     onReveal(crush.id);
+  };
+
+  const handleDelete = () => {
+    if (Platform.OS === "web") {
+      onDelete?.(crush.id);
+      return;
+    }
+    Alert.alert("Delete Crush", "Remove this crush?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => onDelete?.(crush.id) },
+    ]);
   };
 
   return (
@@ -45,6 +57,11 @@ export default function CrushCard({ crush, onReveal }: CrushCardProps) {
             <Text style={styles.toAlias}>Crush on: {crush.toAlias}</Text>
             <Text style={styles.timeText}>{getTimeSince(crush.createdAt)}</Text>
           </View>
+          {onDelete && (
+            <Pressable onPress={handleDelete} hitSlop={8} style={styles.deleteButton}>
+              <Ionicons name="trash-outline" size={16} color={Colors.dark.textMuted} />
+            </Pressable>
+          )}
           {crush.isMutual && crush.isRevealed && (
             <View style={styles.mutualBadge}>
               <Ionicons name="sparkles" size={12} color={Colors.dark.gold} />
@@ -122,6 +139,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.dark.textMuted,
     marginTop: 2,
+  },
+  deleteButton: {
+    padding: 4,
   },
   mutualBadge: {
     flexDirection: "row",

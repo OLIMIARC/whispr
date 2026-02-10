@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
@@ -27,16 +27,28 @@ interface ConfessionCardProps {
   confession: Confession;
   userId: string;
   onReaction: (confessionId: string, type: keyof Confession["reactions"]) => void;
+  onDelete?: (confessionId: string) => void;
   isAfterDark: boolean;
 }
 
-export default function ConfessionCard({ confession, userId, onReaction, isAfterDark }: ConfessionCardProps) {
+export default function ConfessionCard({ confession, userId, onReaction, onDelete, isAfterDark }: ConfessionCardProps) {
   const categoryConfig = CATEGORY_LABELS[confession.category];
-  const totalReactions = Object.values(confession.reactions).reduce((sum, arr) => sum + arr.length, 0);
+  const isOwner = confession.authorId === userId;
 
   const handleReaction = (type: keyof Confession["reactions"]) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onReaction(confession.id, type);
+  };
+
+  const handleDelete = () => {
+    if (Platform.OS === "web") {
+      onDelete?.(confession.id);
+      return;
+    }
+    Alert.alert("Delete Post", "Are you sure you want to delete this post?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => onDelete?.(confession.id) },
+    ]);
   };
 
   return (
@@ -53,8 +65,15 @@ export default function ConfessionCard({ confession, userId, onReaction, isAfter
             </View>
           </View>
         </View>
-        <View style={[styles.categoryBadge, { backgroundColor: categoryConfig.color + "20" }]}>
-          <Text style={[styles.categoryText, { color: categoryConfig.color }]}>{categoryConfig.label}</Text>
+        <View style={styles.headerRight}>
+          {isOwner && onDelete && (
+            <Pressable onPress={handleDelete} hitSlop={8}>
+              <Ionicons name="trash-outline" size={18} color={Colors.dark.textMuted} />
+            </Pressable>
+          )}
+          <View style={[styles.categoryBadge, { backgroundColor: categoryConfig.color + "20" }]}>
+            <Text style={[styles.categoryText, { color: categoryConfig.color }]}>{categoryConfig.label}</Text>
+          </View>
         </View>
       </View>
 
@@ -133,6 +152,11 @@ const styles = StyleSheet.create({
     fontFamily: "Outfit_400Regular",
     fontSize: 12,
     color: Colors.dark.textMuted,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   categoryBadge: {
     paddingHorizontal: 8,

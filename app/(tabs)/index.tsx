@@ -42,7 +42,7 @@ const POST_CATEGORIES: Array<{ key: Confession["category"]; label: string; icon:
 
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
-  const { profile, confessions, isAfterDark, toggleReaction, addConfession, refreshData } = useApp();
+  const { profile, confessions, isAfterDark, toggleReaction, addConfession, deleteConfession, refreshData } = useApp();
   const [sortMode, setSortMode] = useState<SortMode>("trending");
   const [filterCategory, setFilterCategory] = useState<FilterCategory>("all");
   const [showCompose, setShowCompose] = useState(false);
@@ -169,6 +169,7 @@ export default function FeedScreen() {
             confession={item}
             userId={profile?.id || ""}
             onReaction={toggleReaction}
+            onDelete={deleteConfession}
             isAfterDark={isAfterDark}
           />
         )}

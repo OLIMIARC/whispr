@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
@@ -27,13 +27,25 @@ const CONDITION_COLORS: Record<MarketItem["condition"], string> = {
 interface MarketCardProps {
   item: MarketItem;
   onToggleSold?: (id: string) => void;
+  onDelete?: (id: string) => void;
   isOwner?: boolean;
 }
 
-export default function MarketCard({ item, onToggleSold, isOwner }: MarketCardProps) {
+export default function MarketCard({ item, onToggleSold, onDelete, isOwner }: MarketCardProps) {
   const handleToggle = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onToggleSold?.(item.id);
+  };
+
+  const handleDelete = () => {
+    if (Platform.OS === "web") {
+      onDelete?.(item.id);
+      return;
+    }
+    Alert.alert("Delete Listing", "Remove this item from the marketplace?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => onDelete?.(item.id) },
+    ]);
   };
 
   return (
@@ -42,9 +54,16 @@ export default function MarketCard({ item, onToggleSold, isOwner }: MarketCardPr
         <View style={[styles.categoryIcon, { backgroundColor: Colors.dark.secondary + "20" }]}>
           <Ionicons name={CATEGORY_ICONS[item.category]} size={22} color={Colors.dark.secondary} />
         </View>
-        <View style={styles.priceContainer}>
-          <Text style={styles.priceSign}>$</Text>
-          <Text style={styles.price}>{item.price}</Text>
+        <View style={styles.topRight}>
+          {isOwner && onDelete && (
+            <Pressable onPress={handleDelete} hitSlop={8}>
+              <Ionicons name="trash-outline" size={18} color={Colors.dark.textMuted} />
+            </Pressable>
+          )}
+          <View style={styles.priceContainer}>
+            <Text style={styles.priceSign}>$</Text>
+            <Text style={styles.price}>{item.price.toFixed(2)}</Text>
+          </View>
         </View>
       </View>
 
@@ -103,6 +122,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 10,
+  },
+  topRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   categoryIcon: {
     width: 40,

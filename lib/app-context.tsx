@@ -7,14 +7,18 @@ import {
   getUserProfile,
   createUserProfile,
   updateUserProfile,
+  regenerateAlias,
   getConfessions,
   addConfession as addConfessionStorage,
+  deleteConfession as deleteConfessionStorage,
   toggleReaction as toggleReactionStorage,
   getCrushes,
   sendCrush as sendCrushStorage,
+  deleteCrush as deleteCrushStorage,
   revealCrush as revealCrushStorage,
   getMarketItems,
   addMarketItem as addMarketItemStorage,
+  deleteMarketItem as deleteMarketItemStorage,
   toggleSold as toggleSoldStorage,
   isAfterDarkHours,
   seedSampleData,
@@ -27,14 +31,17 @@ interface AppContextValue {
   marketItems: MarketItem[];
   isAfterDark: boolean;
   isLoading: boolean;
-  addConfession: (data: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">) => Promise<void>;
+  addConfession: (data: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">) => Promise<boolean>;
+  deleteConfession: (confessionId: string) => Promise<void>;
   toggleReaction: (confessionId: string, reactionType: keyof Confession["reactions"]) => Promise<void>;
-  sendCrush: (toAlias: string, message: string) => Promise<void>;
+  sendCrush: (toAlias: string, message: string) => Promise<boolean>;
+  deleteCrush: (crushId: string) => Promise<void>;
   revealCrush: (crushId: string) => Promise<void>;
-  addMarketItem: (data: Omit<MarketItem, "id" | "createdAt" | "isSold">) => Promise<void>;
+  addMarketItem: (data: Omit<MarketItem, "id" | "createdAt" | "isSold">) => Promise<boolean>;
+  deleteMarketItem: (itemId: string) => Promise<void>;
   toggleSold: (itemId: string) => Promise<void>;
   refreshData: () => Promise<void>;
-  addKarma: (amount: number) => Promise<void>;
+  regenerateProfile: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -63,7 +70,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       setProfile(userProfile);
 
-      await seedSampleData(userProfile.id, userProfile.alias, userProfile.avatarIndex, userProfile.karma);
+      await seedSampleData();
 
       const [loadedConfessions, loadedCrushes, loadedItems] = await Promise.all([
         getConfessions(),
@@ -82,78 +89,122 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshData = useCallback(async () => {
-    const [loadedConfessions, loadedCrushes, loadedItems] = await Promise.all([
+    const [loadedConfessions, loadedCrushes, loadedItems, freshProfile] = await Promise.all([
       getConfessions(),
       getCrushes(),
       getMarketItems(),
+      getUserProfile(),
     ]);
     setConfessions(loadedConfessions);
     setCrushes(loadedCrushes);
     setMarketItems(loadedItems);
+    if (freshProfile) setProfile(freshProfile);
   }, []);
 
-  const addKarma = useCallback(async (amount: number) => {
-    if (!profile) return;
-    const updated = await updateUserProfile({ karma: profile.karma + amount });
-    setProfile(updated);
-  }, [profile]);
-
   const handleAddConfession = useCallback(async (data: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">) => {
-    await addConfessionStorage(data);
-    if (profile) {
+    const result = await addConfessionStorage(data);
+    if (!result) return false;
+    const freshProfile = await getUserProfile();
+    if (freshProfile) {
       const updated = await updateUserProfile({
-        confessionsCount: profile.confessionsCount + 1,
-        karma: profile.karma + 5,
+        confessionsCount: freshProfile.confessionsCount + 1,
+        karma: freshProfile.karma + 5,
       });
       setProfile(updated);
     }
     const loadedConfessions = await getConfessions();
     setConfessions(loadedConfessions);
-  }, [profile]);
+    return true;
+  }, []);
+
+  const handleDeleteConfession = useCallback(async (confessionId: string) => {
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return;
+    const updated = await deleteConfessionStorage(confessionId, freshProfile.id);
+    setConfessions(updated);
+  }, []);
 
   const handleToggleReaction = useCallback(async (confessionId: string, reactionType: keyof Confession["reactions"]) => {
-    if (!profile) return;
-    const updated = await toggleReactionStorage(confessionId, profile.id, reactionType);
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return;
+    const { confessions: updated, added } = await toggleReactionStorage(confessionId, freshProfile.id, reactionType);
     setConfessions(updated);
-    await addKarma(1);
-  }, [profile, addKarma]);
+    if (added) {
+      const latestProfile = await getUserProfile();
+      if (latestProfile) {
+        const updatedProfile = await updateUserProfile({
+          reactionsGiven: latestProfile.reactionsGiven + 1,
+          karma: latestProfile.karma + 1,
+        });
+        setProfile(updatedProfile);
+      }
+    }
+  }, []);
 
   const handleSendCrush = useCallback(async (toAlias: string, message: string) => {
-    if (!profile) return;
-    await sendCrushStorage({ fromUserId: profile.id, toAlias, message });
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return false;
+    const result = await sendCrushStorage({ fromUserId: freshProfile.id, toAlias, message });
+    if (!result) return false;
     const updated = await updateUserProfile({
-      crushesSent: profile.crushesSent + 1,
-      karma: profile.karma + 3,
+      crushesSent: freshProfile.crushesSent + 1,
+      karma: freshProfile.karma + 3,
     });
     setProfile(updated);
     const loadedCrushes = await getCrushes();
     setCrushes(loadedCrushes);
-  }, [profile]);
+    return true;
+  }, []);
+
+  const handleDeleteCrush = useCallback(async (crushId: string) => {
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return;
+    const updated = await deleteCrushStorage(crushId, freshProfile.id);
+    setCrushes(updated);
+  }, []);
 
   const handleRevealCrush = useCallback(async (crushId: string) => {
     const updated = await revealCrushStorage(crushId);
     setCrushes(updated);
-    if (profile) {
+    const freshProfile = await getUserProfile();
+    if (freshProfile) {
       const updatedProfile = await updateUserProfile({
-        matchesRevealed: profile.matchesRevealed + 1,
+        matchesRevealed: freshProfile.matchesRevealed + 1,
       });
       setProfile(updatedProfile);
     }
-  }, [profile]);
+  }, []);
 
   const handleAddMarketItem = useCallback(async (data: Omit<MarketItem, "id" | "createdAt" | "isSold">) => {
-    await addMarketItemStorage(data);
-    if (profile) {
-      const updated = await updateUserProfile({ karma: profile.karma + 3 });
+    const result = await addMarketItemStorage(data);
+    if (!result) return false;
+    const freshProfile = await getUserProfile();
+    if (freshProfile) {
+      const updated = await updateUserProfile({ karma: freshProfile.karma + 3 });
       setProfile(updated);
     }
     const items = await getMarketItems();
     setMarketItems(items);
-  }, [profile]);
+    return true;
+  }, []);
+
+  const handleDeleteMarketItem = useCallback(async (itemId: string) => {
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return;
+    const updated = await deleteMarketItemStorage(itemId, freshProfile.id);
+    setMarketItems(updated);
+  }, []);
 
   const handleToggleSold = useCallback(async (itemId: string) => {
-    const updated = await toggleSoldStorage(itemId);
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return;
+    const updated = await toggleSoldStorage(itemId, freshProfile.id);
     setMarketItems(updated);
+  }, []);
+
+  const handleRegenerateProfile = useCallback(async () => {
+    const updated = await regenerateAlias();
+    setProfile(updated);
   }, []);
 
   const value = useMemo(() => ({
@@ -164,16 +215,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isAfterDark,
     isLoading,
     addConfession: handleAddConfession,
+    deleteConfession: handleDeleteConfession,
     toggleReaction: handleToggleReaction,
     sendCrush: handleSendCrush,
+    deleteCrush: handleDeleteCrush,
     revealCrush: handleRevealCrush,
     addMarketItem: handleAddMarketItem,
+    deleteMarketItem: handleDeleteMarketItem,
     toggleSold: handleToggleSold,
     refreshData,
-    addKarma,
+    regenerateProfile: handleRegenerateProfile,
   }), [profile, confessions, crushes, marketItems, isAfterDark, isLoading,
-    handleAddConfession, handleToggleReaction, handleSendCrush, handleRevealCrush,
-    handleAddMarketItem, handleToggleSold, refreshData, addKarma]);
+    handleAddConfession, handleDeleteConfession, handleToggleReaction,
+    handleSendCrush, handleDeleteCrush, handleRevealCrush,
+    handleAddMarketItem, handleDeleteMarketItem, handleToggleSold,
+    refreshData, handleRegenerateProfile]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

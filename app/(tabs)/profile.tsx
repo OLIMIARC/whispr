@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Haptics from "expo-haptics";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import Colors from "@/constants/colors";
 import Avatar from "@/components/Avatar";
@@ -18,7 +19,7 @@ import { getKarmaLevel, getKarmaTitle } from "@/lib/storage";
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { profile, confessions, crushes, marketItems, isAfterDark } = useApp();
+  const { profile, confessions, crushes, marketItems, isAfterDark, regenerateProfile } = useApp();
 
   const myConfessions = useMemo(
     () => confessions.filter((c) => c.authorId === profile?.id),
@@ -83,6 +84,16 @@ export default function ProfileScreen() {
             <Text style={[styles.titleText, { color: karmaColor }]}>{karmaTitle}</Text>
           </View>
         </View>
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            regenerateProfile();
+          }}
+          style={styles.regenerateButton}
+        >
+          <Ionicons name="refresh" size={16} color={Colors.dark.accent} />
+          <Text style={styles.regenerateText}>New Identity</Text>
+        </Pressable>
       </Animated.View>
 
       <Animated.View entering={FadeInDown.duration(400).delay(100)} style={styles.karmaProgressCard}>
@@ -407,5 +418,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.dark.textSecondary,
     flex: 1,
+  },
+  regenerateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.accent + "15",
+    borderWidth: 1,
+    borderColor: Colors.dark.accent + "30",
+  },
+  regenerateText: {
+    fontFamily: "Outfit_600SemiBold",
+    fontSize: 13,
+    color: Colors.dark.accent,
   },
 });

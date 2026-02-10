@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -42,7 +43,7 @@ const CONDITIONS: Array<{ key: MarketItem["condition"]; label: string }> = [
 
 export default function MarketScreen() {
   const insets = useSafeAreaInsets();
-  const { profile, marketItems, addMarketItem, toggleSold, refreshData } = useApp();
+  const { profile, marketItems, addMarketItem, toggleSold, deleteMarketItem, refreshData } = useApp();
   const [selectedCategory, setSelectedCategory] = useState<MarketCategory>("all");
   const [showPost, setShowPost] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -65,12 +66,19 @@ export default function MarketScreen() {
   }, [refreshData]);
 
   const handlePost = async () => {
-    if (!itemTitle.trim() || !itemPrice.trim() || !profile) return;
+    if (!itemTitle.trim() || !profile) return;
+    const parsedPrice = parseFloat(itemPrice);
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 99999) {
+      if (Platform.OS !== "web") {
+        Alert.alert("Invalid Price", "Please enter a valid price between $0.01 and $99,999");
+      }
+      return;
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await addMarketItem({
+    const success = await addMarketItem({
       title: itemTitle.trim(),
       description: itemDescription.trim(),
-      price: parseFloat(itemPrice) || 0,
+      price: parsedPrice,
       category: itemCategory,
       condition: itemCondition,
       sellerId: profile.id,
@@ -78,8 +86,10 @@ export default function MarketScreen() {
       sellerKarma: profile.karma,
       sellerAvatarIndex: profile.avatarIndex,
     });
-    resetForm();
-    setShowPost(false);
+    if (success) {
+      resetForm();
+      setShowPost(false);
+    }
   };
 
   const resetForm = () => {
@@ -150,6 +160,7 @@ export default function MarketScreen() {
             item={item}
             isOwner={item.sellerId === profile?.id}
             onToggleSold={toggleSold}
+            onDelete={deleteMarketItem}
           />
         )}
         ListHeaderComponent={renderHeader}

@@ -21,7 +21,7 @@ import CrushCard from "@/components/CrushCard";
 
 export default function CrushScreen() {
   const insets = useSafeAreaInsets();
-  const { crushes, sendCrush, revealCrush, refreshData } = useApp();
+  const { crushes, sendCrush, revealCrush, deleteCrush, refreshData } = useApp();
   const [showSend, setShowSend] = useState(false);
   const [crushAlias, setCrushAlias] = useState("");
   const [crushMessage, setCrushMessage] = useState("");
@@ -105,7 +105,7 @@ export default function CrushScreen() {
       <FlatList
         data={crushes}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <CrushCard crush={item} onReveal={revealCrush} />}
+        renderItem={({ item }) => <CrushCard crush={item} onReveal={revealCrush} onDelete={deleteCrush} />}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
         contentContainerStyle={[styles.listContent, { paddingBottom: Platform.OS === "web" ? 34 + 84 : 100 }]}
