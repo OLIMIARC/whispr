@@ -1,4 +1,9 @@
 @echo off
-echo Bypassing PowerShell restrictions...
-node scripts/start-with-tunnel.js
+echo 🚀 Starting Campus Confessions (Cloud Mode)...
+echo --------------------------------------------
+echo Backend: Supabase (Active)
+echo Network: Cloud (No Tunnel Needed)
+echo --------------------------------------------
+echo.
+call npx expo start --clear
 pause

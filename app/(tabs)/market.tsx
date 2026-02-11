@@ -23,7 +23,8 @@ import Colors from "@/constants/colors";
 import { useApp } from "@/lib/app-context";
 import MarketCard from "@/components/MarketCard";
 import type { MarketItem } from "@/lib/storage";
-import { getApiUrl } from "@/lib/api-config";
+import { supabase } from "@/lib/supabase";
+// import { getApiUrl } from "@/lib/api-config"; // Unused now
 
 type MarketCategory = "all" | MarketItem["category"];
 
@@ -95,30 +96,23 @@ export default function MarketScreen() {
 
   const uploadImage = async (media: SelectedMedia): Promise<string | null> => {
     try {
-      const formData = new FormData();
-      const file: any = {
-        uri: media.uri,
-        type: "image/jpeg",
-        name: "image.jpg",
-      };
-      formData.append("image", file);
+      const ext = media.uri.split(".").pop()?.toLowerCase() || "jpg";
+      const path = `market/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
 
-      const apiUrl = getApiUrl();
-      const response = await fetch(`${apiUrl}/api/upload/image`, {
-        method: "POST",
-        body: formData,
-        headers: {
-          "bypass-tunnel-reminder": "true",
-          "ngrok-skip-browser-warning": "true",
-        }
-      });
+      const response = await fetch(media.uri);
+      const blob = await response.blob();
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Upload failed");
-      }
-      const result = await response.json();
-      return result.url;
+      const { data, error } = await supabase.storage
+        .from("whispr-media")
+        .upload(path, blob, { contentType: "image/jpeg" });
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("whispr-media")
+        .getPublicUrl(path);
+
+      return publicUrl;
     } catch (error) {
       console.error("Upload error:", error);
       return null;

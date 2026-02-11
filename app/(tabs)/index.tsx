@@ -15,13 +15,14 @@ import {
   Image,
 } from "react-native";
 import { Video, ResizeMode } from "expo-av";
-import { getApiUrl } from "@/lib/api-config";
+// import { getApiUrl } from "@/lib/api-config"; // Unused now
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, SlideInUp } from "react-native-reanimated";
 import Colors from "@/constants/colors";
 import { useApp } from "@/lib/app-context";
+import { supabase } from "@/lib/supabase";
 import ConfessionCard from "@/components/ConfessionCard";
 import MediaPicker, { type SelectedMedia } from "@/components/MediaPicker";
 import type { Confession } from "@/lib/storage";
@@ -81,34 +82,31 @@ export default function FeedScreen() {
 
   const uploadMedia = async (media: SelectedMedia): Promise<{ url: string; thumbnail?: string } | null> => {
     try {
-      const formData = new FormData();
-      const file: any = {
-        uri: media.uri,
-        type: media.type === "video" ? "video/mp4" : "image/jpeg",
-        name: media.type === "video" ? "video.mp4" : "image.jpg",
+      const ext = media.uri.split(".").pop()?.toLowerCase() || "jpg";
+      const path = `${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+
+      // Convert URI to Blob
+      const response = await fetch(media.uri);
+      const blob = await response.blob();
+
+      // Upload to Supabase
+      const { data, error } = await supabase.storage
+        .from("whispr-media")
+        .upload(path, blob, {
+          contentType: media.type === "video" ? "video/mp4" : "image/jpeg",
+        });
+
+      if (error) throw error;
+
+      // Get Public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from("whispr-media")
+        .getPublicUrl(path);
+
+      return {
+        url: publicUrl,
+        thumbnail: media.type === "image" ? publicUrl : undefined
       };
-      formData.append(media.type, file);
-
-      const endpoint = media.type === "video" ? "/api/upload/video" : "/api/upload/image";
-      const apiUrl = getApiUrl();
-      const targetUrl = `${apiUrl}${endpoint}`;
-      console.log("Attempting upload to:", targetUrl);
-
-      const response = await fetch(targetUrl, {
-        method: "POST",
-        body: formData,
-        headers: {
-          // Bypass simple tunnel warnings
-          "bypass-tunnel-reminder": "true",
-          "ngrok-skip-browser-warning": "true",
-        }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Upload failed");
-      }
-      return await response.json();
     } catch (error) {
       console.error("Upload error:", error);
       Alert.alert("Upload Failed", "Could not upload media. Please try again.");
