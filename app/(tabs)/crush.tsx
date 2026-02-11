@@ -26,6 +26,7 @@ export default function CrushScreen() {
   const [crushAlias, setCrushAlias] = useState("");
   const [crushMessage, setCrushMessage] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -34,9 +35,20 @@ export default function CrushScreen() {
   }, [refreshData]);
 
   const handleSend = async () => {
-    if (!crushAlias.trim()) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await sendCrush(crushAlias.trim(), crushMessage.trim());
+    if (!crushAlias.trim() || isSending) return;
+    setIsSending(true);
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await sendCrush(crushAlias.trim(), crushMessage.trim());
+      setCrushAlias("");
+      setCrushMessage("");
+      setShowSend(false);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleCloseSend = () => {
     setCrushAlias("");
     setCrushMessage("");
     setShowSend(false);
@@ -117,20 +129,28 @@ export default function CrushScreen() {
 
       <Modal visible={showSend} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowSend(false)} />
+          <Pressable style={styles.modalBackdrop} onPress={handleCloseSend} />
           <Animated.View entering={SlideInUp.duration(300)} style={[styles.sendSheet, { paddingBottom: (Platform.OS === "web" ? 34 : insets.bottom) + 16 }]}>
             <View style={styles.composeHandle} />
             <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowSend(false)}>
+              <Pressable onPress={handleCloseSend} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
                 <Ionicons name="close" size={24} color={Colors.dark.textSecondary} />
               </Pressable>
               <Text style={styles.sheetTitle}>Send a Crush</Text>
               <Pressable
                 onPress={handleSend}
-                disabled={!crushAlias.trim()}
-                style={[styles.sendCrushButton, !crushAlias.trim() && { opacity: 0.4 }]}
+                disabled={!crushAlias.trim() || isSending}
+                style={({ pressed }) => [
+                  styles.sendCrushButton,
+                  (!crushAlias.trim() || isSending) && { opacity: 0.4 },
+                  pressed && !(!crushAlias.trim() || isSending) && { opacity: 0.8 }
+                ]}
               >
-                <Text style={styles.sendCrushButtonText}>Send</Text>
+                {isSending ? (
+                  <Text style={styles.sendCrushButtonText}>Sending...</Text>
+                ) : (
+                  <Text style={styles.sendCrushButtonText}>Send</Text>
+                )}
               </Pressable>
             </View>
 
@@ -147,7 +167,7 @@ export default function CrushScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Anonymous message (optional)</Text>
+              <Text style={styles.inputLabel}>Anonymous message <Text style={styles.optionalLabel}>(optional)</Text></Text>
               <TextInput
                 style={[styles.input, styles.messageInput]}
                 placeholder="Leave them a hint..."
@@ -157,7 +177,13 @@ export default function CrushScreen() {
                 multiline
                 maxLength={200}
               />
-              <Text style={styles.charCount}>{crushMessage.length}/200</Text>
+              <Text style={[
+                styles.charCount,
+                crushMessage.length >= 190 && { color: "#FF5252" },
+                crushMessage.length >= 170 && crushMessage.length < 190 && { color: "#FFA726" },
+              ]}>
+                {crushMessage.length}/200
+              </Text>
             </View>
 
             <View style={styles.infoBox}>
@@ -355,6 +381,11 @@ const styles = StyleSheet.create({
     color: Colors.dark.textMuted,
     textAlign: "right",
     marginTop: 4,
+  },
+  optionalLabel: {
+    fontFamily: "Outfit_400Regular",
+    fontSize: 13,
+    color: Colors.dark.textMuted,
   },
   infoBox: {
     flexDirection: "row",

@@ -20,6 +20,13 @@ function RootLayoutNav() {
   );
 }
 
+import { LogBox } from 'react-native';
+
+// Suppress known warnings that are not critical blockers
+LogBox.ignoreLogs([
+  'Expo AV has been deprecated',
+]);
+
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     Outfit_400Regular,

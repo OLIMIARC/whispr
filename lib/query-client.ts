@@ -6,10 +6,27 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
  * @returns {string} The API base URL
  */
 export function getApiUrl(): string {
+  // Check if we're in Expo Go on a physical device (local development)
+  // In this case, we need to use the local network IP address
+  const isExpoGo = typeof navigator !== 'undefined' && 
+                   navigator.product === 'ReactNative';
+  
+  // For local development, use your computer's local IP
+  // This allows physical devices on the same network to connect
+  if (isExpoGo && !process.env.EXPO_PUBLIC_DOMAIN) {
+    // TODO: Update this IP address to match your computer's local IP
+    // Run 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find it
+    const localIP = "172.20.10.9"; // Current detected IP
+    return `http://${localIP}:5000`;
+  }
+  
+  // For production/Replit deployment
   let host = process.env.EXPO_PUBLIC_DOMAIN;
 
   if (!host) {
-    throw new Error("EXPO_PUBLIC_DOMAIN is not set");
+    // Fallback for development if no env var is set
+    console.warn("EXPO_PUBLIC_DOMAIN not set, using localhost");
+    return "http://localhost:5000";
   }
 
   let url = new URL(`https://${host}`);

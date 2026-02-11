@@ -1,11 +1,12 @@
-import React from "react";
-import { View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
+import React, { useState } from "react";
+import { View, Text, Pressable, StyleSheet, Alert, Platform, Image, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import Avatar from "./Avatar";
 import KarmaBadge from "./KarmaBadge";
 import { MarketItem, getTimeSince } from "@/lib/storage";
+import CommentSection from "./CommentSection";
 
 const CATEGORY_ICONS: Record<MarketItem["category"], keyof typeof Ionicons.glyphMap> = {
   textbooks: "book-outline",
@@ -32,6 +33,8 @@ interface MarketCardProps {
 }
 
 export default function MarketCard({ item, onToggleSold, onDelete, isOwner }: MarketCardProps) {
+  const [showComments, setShowComments] = useState(false);
+
   const handleToggle = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onToggleSold?.(item.id);
@@ -70,6 +73,23 @@ export default function MarketCard({ item, onToggleSold, onDelete, isOwner }: Ma
       <Text style={[styles.title, item.isSold && styles.soldText]}>{item.title}</Text>
       <Text style={styles.description} numberOfLines={2}>{item.description}</Text>
 
+      {item.imageUrls && item.imageUrls.length > 0 && (
+        <View style={styles.imageContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {item.imageUrls.map((url, index) => (
+              <Image
+                key={index}
+                source={{ uri: url }}
+                style={[styles.marketImage, index > 0 && { marginLeft: 10 }]}
+                resizeMode="cover"
+              />
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+
+
       <View style={styles.metaRow}>
         <View style={[styles.conditionBadge, { borderColor: CONDITION_COLORS[item.condition] + "40" }]}>
           <Text style={[styles.conditionText, { color: CONDITION_COLORS[item.condition] }]}>
@@ -77,6 +97,18 @@ export default function MarketCard({ item, onToggleSold, onDelete, isOwner }: Ma
           </Text>
         </View>
         <Text style={styles.timeText}>{getTimeSince(item.createdAt)}</Text>
+        <View style={{ flex: 1 }} />
+        <Pressable
+          style={styles.commentButton}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setShowComments(!showComments);
+          }}
+        >
+          <Ionicons name="chatbubble-outline" size={16} color={Colors.dark.textSecondary} />
+          {/* We might want to add comment count to MarketItem later */}
+          <Text style={styles.commentButtonText}>Q&A</Text>
+        </Pressable>
       </View>
 
       <View style={styles.sellerRow}>
@@ -97,6 +129,14 @@ export default function MarketCard({ item, onToggleSold, onDelete, isOwner }: Ma
         <View style={styles.soldOverlay}>
           <Text style={styles.soldLabel}>SOLD</Text>
         </View>
+      )}
+
+      {showComments && (
+        <CommentSection
+          parentId={item.id}
+          parentType="market"
+          isVisible={true}
+        />
       )}
     </View>
   );
@@ -166,6 +206,16 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 10,
   },
+  imageContainer: {
+    marginBottom: 12,
+  },
+  marketImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.surface,
+  },
+
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -186,6 +236,20 @@ const styles = StyleSheet.create({
     fontFamily: "Outfit_400Regular",
     fontSize: 12,
     color: Colors.dark.textMuted,
+  },
+  commentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.surface,
+  },
+  commentButtonText: {
+    fontFamily: "Outfit_600SemiBold",
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
   },
   sellerRow: {
     flexDirection: "row",

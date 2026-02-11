@@ -6,6 +6,7 @@ const KEYS = {
   CONFESSIONS: "whispr_confessions",
   CRUSHES: "whispr_crushes",
   MARKETPLACE: "whispr_marketplace",
+  COMMENTS: "whispr_comments",
 };
 
 const LIMITS = {
@@ -52,6 +53,9 @@ export interface Confession {
   commentCount: number;
   isAfterDark: boolean;
   createdAt: string;
+  mediaUrl?: string;
+  mediaType?: "image" | "video";
+  mediaThumbnail?: string;
 }
 
 export interface Crush {
@@ -77,6 +81,20 @@ export interface MarketItem {
   sellerAvatarIndex: number;
   isSold: boolean;
   createdAt: string;
+  imageUrls?: string[];
+}
+
+export interface Comment {
+  id: string;
+  parentId: string; // ID of confession or market item
+  parentType: "confession" | "market";
+  content: string;
+  authorId: string;
+  authorAlias: string;
+  authorAvatarIndex: number;
+  authorKarma: number;
+  createdAt: string;
+  likes: string[]; // array of user IDs
 }
 
 const AVATAR_ALIASES = [
@@ -211,7 +229,8 @@ export async function getConfessions(): Promise<Confession[]> {
 
 export async function addConfession(confession: Omit<Confession, "id" | "createdAt" | "reactions" | "commentCount">): Promise<Confession | null> {
   const sanitizedContent = sanitizeText(confession.content, LIMITS.MAX_CONFESSION_LENGTH);
-  if (sanitizedContent.length < 3) return null;
+  // Allow post if it has media, even if content is empty/short
+  if (sanitizedContent.length < 3 && !confession.mediaUrl) return null;
 
   const confessions = await getConfessions();
   const newConfession: Confession = {
@@ -390,6 +409,79 @@ export async function toggleSold(itemId: string, userId: string): Promise<Market
   }
   await AsyncStorage.setItem(KEYS.MARKETPLACE, JSON.stringify(items));
   return items;
+}
+
+export async function getComments(parentId: string): Promise<Comment[]> {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.COMMENTS);
+    const allComments: Comment[] = data ? JSON.parse(data) : [];
+    // Sort by oldest first
+    return allComments
+      .filter((c) => c.parentId === parentId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function addComment(comment: Omit<Comment, "id" | "createdAt" | "likes">): Promise<Comment | null> {
+  const sanitizedContent = sanitizeText(comment.content, 300);
+  if (sanitizedContent.length < 1) return null;
+
+  try {
+    const data = await AsyncStorage.getItem(KEYS.COMMENTS);
+    const allComments: Comment[] = data ? JSON.parse(data) : [];
+
+    const newComment: Comment = {
+      ...comment,
+      content: sanitizedContent,
+      id: generateId(),
+      createdAt: new Date().toISOString(),
+      likes: [],
+    };
+
+    allComments.push(newComment);
+    await AsyncStorage.setItem(KEYS.COMMENTS, JSON.stringify(allComments));
+
+    // Update parent comment count for confessions
+    if (comment.parentType === "confession") {
+      const confessions = await getConfessions();
+      const index = confessions.findIndex(c => c.id === comment.parentId);
+      if (index !== -1) {
+        confessions[index].commentCount += 1;
+        await AsyncStorage.setItem(KEYS.CONFESSIONS, JSON.stringify(confessions));
+      }
+    }
+
+    return newComment;
+  } catch (e) {
+    console.error("Error adding comment", e);
+    return null;
+  }
+}
+
+export async function deleteComment(commentId: string, parentId: string, parentType: "confession" | "market"): Promise<void> {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.COMMENTS);
+    if (!data) return;
+
+    const allComments: Comment[] = JSON.parse(data);
+    const filtered = allComments.filter(c => c.id !== commentId);
+
+    await AsyncStorage.setItem(KEYS.COMMENTS, JSON.stringify(filtered));
+
+    // Update parent comment count
+    if (parentType === "confession") {
+      const confessions = await getConfessions();
+      const index = confessions.findIndex(c => c.id === parentId);
+      if (index !== -1 && confessions[index].commentCount > 0) {
+        confessions[index].commentCount -= 1;
+        await AsyncStorage.setItem(KEYS.CONFESSIONS, JSON.stringify(confessions));
+      }
+    }
+  } catch (e) {
+    console.error("Error deleting comment", e);
+  }
 }
 
 export async function seedSampleData(): Promise<void> {

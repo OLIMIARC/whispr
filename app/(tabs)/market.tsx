@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo } from "react";
+import MediaPicker, { type SelectedMedia } from "../../components/MediaPicker";
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import {
   ScrollView,
   RefreshControl,
   Alert,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +23,7 @@ import Colors from "@/constants/colors";
 import { useApp } from "@/lib/app-context";
 import MarketCard from "@/components/MarketCard";
 import type { MarketItem } from "@/lib/storage";
+import { getApiUrl } from "@/lib/api-config";
 
 type MarketCategory = "all" | MarketItem["category"];
 
@@ -47,12 +50,15 @@ export default function MarketScreen() {
   const [selectedCategory, setSelectedCategory] = useState<MarketCategory>("all");
   const [showPost, setShowPost] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
 
   const [itemTitle, setItemTitle] = useState("");
   const [itemDescription, setItemDescription] = useState("");
   const [itemPrice, setItemPrice] = useState("");
+  const [priceError, setPriceError] = useState("");
   const [itemCategory, setItemCategory] = useState<MarketItem["category"]>("textbooks");
   const [itemCondition, setItemCondition] = useState<MarketItem["condition"]>("good");
+  const [selectedImages, setSelectedImages] = useState<string[]>([]); // Store uploaded URLs
 
   const filteredItems = useMemo(() => {
     if (selectedCategory === "all") return marketItems.filter((i) => !i.isSold);
@@ -65,39 +71,131 @@ export default function MarketScreen() {
     setRefreshing(false);
   }, [refreshData]);
 
-  const handlePost = async () => {
-    if (!itemTitle.trim() || !profile) return;
-    const parsedPrice = parseFloat(itemPrice);
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 99999) {
-      if (Platform.OS !== "web") {
-        Alert.alert("Invalid Price", "Please enter a valid price between $0.01 and $99,999");
+  const validatePrice = (price: string): boolean => {
+    if (!price.trim()) {
+      setPriceError("Price is required");
+      return false;
+    }
+    const parsedPrice = parseFloat(price);
+    if (!Number.isFinite(parsedPrice)) {
+      setPriceError("Please enter a valid number");
+      return false;
+    }
+    if (parsedPrice <= 0) {
+      setPriceError("Price must be greater than $0");
+      return false;
+    }
+    if (parsedPrice > 99999) {
+      setPriceError("Price cannot exceed $99,999");
+      return false;
+    }
+    setPriceError("");
+    return true;
+  };
+
+  const uploadImage = async (media: SelectedMedia): Promise<string | null> => {
+    try {
+      const formData = new FormData();
+      const file: any = {
+        uri: media.uri,
+        type: "image/jpeg",
+        name: "image.jpg",
+      };
+      formData.append("image", file);
+
+      const apiUrl = getApiUrl();
+      const response = await fetch(`${apiUrl}/api/upload/image`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          "bypass-tunnel-reminder": "true",
+          "ngrok-skip-browser-warning": "true",
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Upload failed");
       }
+      const result = await response.json();
+      return result.url;
+    } catch (error) {
+      console.error("Upload error:", error);
+      return null;
+    }
+  };
+
+  const handlePost = async () => {
+    if (!itemTitle.trim() || !profile || isPosting) return;
+
+    if (!validatePrice(itemPrice)) {
       return;
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const success = await addMarketItem({
-      title: itemTitle.trim(),
-      description: itemDescription.trim(),
-      price: parsedPrice,
-      category: itemCategory,
-      condition: itemCondition,
-      sellerId: profile.id,
-      sellerAlias: profile.alias,
-      sellerKarma: profile.karma,
-      sellerAvatarIndex: profile.avatarIndex,
-    });
-    if (success) {
-      resetForm();
-      setShowPost(false);
+
+    setIsPosting(true);
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const success = await addMarketItem({
+        title: itemTitle.trim(),
+        description: itemDescription.trim(),
+        price: parseFloat(itemPrice),
+        category: itemCategory,
+        condition: itemCondition,
+        sellerId: profile.id,
+        sellerAlias: profile.alias,
+        sellerKarma: profile.karma,
+        sellerAvatarIndex: profile.avatarIndex,
+        imageUrls: selectedImages.length > 0 ? selectedImages : undefined,
+      } as any);
+      if (success) {
+        resetForm();
+        setShowPost(false);
+      }
+    } finally {
+      setIsPosting(false);
     }
+  };
+
+  const handleAddImage = async (media: SelectedMedia | null) => {
+    if (!media || selectedImages.length >= 3) return;
+
+    setIsPosting(true);
+    const url = await uploadImage(media);
+    setIsPosting(false);
+
+    if (url) {
+      setSelectedImages([...selectedImages, url]);
+    }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImages(selectedImages.filter((_, i) => i !== index));
   };
 
   const resetForm = () => {
     setItemTitle("");
     setItemDescription("");
     setItemPrice("");
+    setPriceError("");
     setItemCategory("textbooks");
     setItemCondition("good");
+    setSelectedImages([]);
+  };
+
+  const handleCloseModal = () => {
+    resetForm();
+    setShowPost(false);
+  };
+
+  const handlePriceChange = (text: string) => {
+    // Filter to only allow numbers and one decimal point
+    const filtered = text.replace(/[^0-9.]/g, '');
+    // Prevent multiple decimal points
+    const parts = filtered.split('.');
+    const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : filtered;
+    setItemPrice(sanitized);
+    // Clear error when user starts typing
+    if (priceError) setPriceError("");
   };
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -174,20 +272,24 @@ export default function MarketScreen() {
 
       <Modal visible={showPost} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowPost(false)} />
+          <Pressable style={styles.modalBackdrop} onPress={handleCloseModal} />
           <Animated.View entering={SlideInUp.duration(300)} style={[styles.postSheet, { paddingBottom: (Platform.OS === "web" ? 34 : insets.bottom) + 16 }]}>
             <View style={styles.composeHandle} />
             <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowPost(false)}>
+              <Pressable onPress={handleCloseModal}>
                 <Ionicons name="close" size={24} color={Colors.dark.textSecondary} />
               </Pressable>
               <Text style={styles.sheetTitle}>List an Item</Text>
               <Pressable
                 onPress={handlePost}
-                disabled={!itemTitle.trim() || !itemPrice.trim()}
-                style={[styles.listButton, (!itemTitle.trim() || !itemPrice.trim()) && { opacity: 0.4 }]}
+                disabled={!itemTitle.trim() || !itemPrice.trim() || isPosting}
+                style={[styles.listButton, (!itemTitle.trim() || !itemPrice.trim() || isPosting) && { opacity: 0.4 }]}
               >
-                <Text style={styles.listButtonText}>List</Text>
+                {isPosting ? (
+                  <Text style={styles.listButtonText}>Posting...</Text>
+                ) : (
+                  <Text style={styles.listButtonText}>List</Text>
+                )}
               </Pressable>
             </View>
 
@@ -218,15 +320,50 @@ export default function MarketScreen() {
               </View>
 
               <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Photos (Max 3)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+                  {selectedImages.map((url, index) => (
+                    <View key={index} style={{ position: "relative" }}>
+                      <Image source={{ uri: url }} style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: Colors.dark.surface }} />
+                      <Pressable
+                        onPress={() => handleRemoveImage(index)}
+                        style={{
+                          position: "absolute",
+                          top: -6,
+                          right: -6,
+                          backgroundColor: Colors.dark.card,
+                          borderRadius: 12,
+                          borderWidth: 2,
+                          borderColor: Colors.dark.background,
+                        }}
+                      >
+                        <Ionicons name="close-circle" size={24} color={Colors.dark.textSecondary} />
+                      </Pressable>
+                    </View>
+                  ))}
+                  {selectedImages.length < 3 && (
+                    <MediaPicker
+                      selectedMedia={null}
+                      onMediaSelected={handleAddImage}
+                      allowVideo={false}
+                    />
+                  )}
+                </ScrollView>
+              </View>
+
+              <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Price ($)</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, priceError && styles.inputError]}
                   placeholder="0.00"
                   placeholderTextColor={Colors.dark.textMuted}
                   value={itemPrice}
-                  onChangeText={setItemPrice}
+                  onChangeText={handlePriceChange}
                   keyboardType="decimal-pad"
                 />
+                {priceError ? (
+                  <Text style={styles.errorText}>{priceError}</Text>
+                ) : null}
               </View>
 
               <View style={styles.inputGroup}>
@@ -442,5 +579,15 @@ const styles = StyleSheet.create({
   },
   selectChipTextActive: {
     color: Colors.dark.green,
+  },
+  inputError: {
+    borderColor: "#FF5252",
+    borderWidth: 2,
+  },
+  errorText: {
+    fontFamily: "Outfit_400Regular",
+    fontSize: 12,
+    color: "#FF5252",
+    marginTop: 4,
   },
 });

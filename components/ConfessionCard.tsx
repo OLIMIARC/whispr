@@ -1,10 +1,12 @@
-import React from "react";
-import { View, Text, Pressable, StyleSheet, Alert, Platform } from "react-native";
+import React, { useState } from "react";
+import { View, Text, Pressable, StyleSheet, Alert, Platform, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { Video, ResizeMode } from "expo-av";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import Avatar from "./Avatar";
 import KarmaBadge from "./KarmaBadge";
+import CommentSection from "./CommentSection";
 import { Confession, getTimeSince } from "@/lib/storage";
 
 const CATEGORY_LABELS: Record<Confession["category"], { label: string; color: string }> = {
@@ -26,14 +28,18 @@ const REACTION_CONFIG: Array<{ key: keyof Confession["reactions"]; icon: keyof t
 interface ConfessionCardProps {
   confession: Confession;
   userId: string;
+  userAlias: string;
+  userAvatar: number;
   onReaction: (confessionId: string, type: keyof Confession["reactions"]) => void;
   onDelete?: (confessionId: string) => void;
   isAfterDark: boolean;
 }
 
-export default function ConfessionCard({ confession, userId, onReaction, onDelete, isAfterDark }: ConfessionCardProps) {
+export default function ConfessionCard({ confession, userId, userAlias, userAvatar, onReaction, onDelete, isAfterDark }: ConfessionCardProps) {
   const categoryConfig = CATEGORY_LABELS[confession.category];
   const isOwner = confession.authorId === userId;
+  const [showComments, setShowComments] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const handleReaction = (type: keyof Confession["reactions"]) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -79,28 +85,98 @@ export default function ConfessionCard({ confession, userId, onReaction, onDelet
 
       <Text style={styles.content}>{confession.content}</Text>
 
-      <View style={styles.reactionsRow}>
-        {REACTION_CONFIG.map((reaction) => {
-          const count = confession.reactions[reaction.key].length;
-          const isActive = confession.reactions[reaction.key].includes(userId);
-          return (
-            <Pressable
-              key={reaction.key}
-              onPress={() => handleReaction(reaction.key)}
-              style={[styles.reactionButton, isActive && { backgroundColor: reaction.color + "20" }]}
-            >
-              <Ionicons
-                name={isActive ? reaction.activeIcon : reaction.icon}
-                size={18}
-                color={isActive ? reaction.color : Colors.dark.textMuted}
+      {/* Media Display */}
+      {confession.mediaUrl && confession.mediaType === "image" && (
+        <Pressable onPress={() => {
+          // Future: open full screen image viewer
+        }}>
+          <Image
+            source={{ uri: confession.mediaUrl }}
+            style={styles.mediaImage}
+            resizeMode="cover"
+          />
+        </Pressable>
+      )}
+
+      {confession.mediaUrl && confession.mediaType === "video" && (
+        <View style={styles.videoPlaceholder}>
+          {isPlaying ? (
+            <Video
+              source={{ uri: confession.mediaUrl }}
+              style={styles.mediaImage}
+              useNativeControls
+              resizeMode={ResizeMode.COVER}
+              shouldPlay={true}
+              isLooping
+            />
+          ) : (
+            <Pressable onPress={() => setIsPlaying(true)} style={styles.videoContainer}>
+              <Image
+                source={{ uri: confession.mediaThumbnail || confession.mediaUrl }}
+                style={styles.mediaImage}
+                resizeMode="cover"
               />
-              {count > 0 && (
-                <Text style={[styles.reactionCount, isActive && { color: reaction.color }]}>{count}</Text>
-              )}
+              <View style={styles.videoOverlay}>
+                <Ionicons name="play-circle" size={64} color="rgba(255, 255, 255, 0.9)" />
+              </View>
             </Pressable>
-          );
-        })}
+          )}
+        </View>
+      )}
+
+      <View style={styles.actionsRow}>
+        <View style={styles.reactionsRow}>
+          {REACTION_CONFIG.map((reaction) => {
+            const count = confession.reactions[reaction.key].length;
+            const isActive = confession.reactions[reaction.key].includes(userId);
+            return (
+              <Pressable
+                key={reaction.key}
+                onPress={() => handleReaction(reaction.key)}
+                style={[styles.reactionButton, isActive && { backgroundColor: reaction.color + "20" }]}
+              >
+                <Ionicons
+                  name={isActive ? reaction.activeIcon : reaction.icon}
+                  size={18}
+                  color={isActive ? reaction.color : Colors.dark.textMuted}
+                />
+                {count > 0 && (
+                  <Text style={[styles.reactionCount, isActive && { color: reaction.color }]}>{count}</Text>
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Comment Button */}
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setShowComments(!showComments);
+          }}
+          style={[styles.commentButton, showComments && styles.commentButtonActive]}
+        >
+          <Ionicons
+            name={showComments ? "chatbubble" : "chatbubble-outline"}
+            size={18}
+            color={showComments ? Colors.dark.primary : Colors.dark.textMuted}
+          />
+          {confession.commentCount > 0 && (
+            <Text style={[styles.commentCount, showComments && { color: Colors.dark.primary }]}>
+              {confession.commentCount}
+            </Text>
+          )}
+        </Pressable>
       </View>
+
+      {/* Comment Section */}
+      {showComments && (
+        <CommentSection
+          parentId={confession.id}
+          parentType="confession"
+          isVisible={true}
+        />
+      )}
     </View>
   );
 }
@@ -188,6 +264,53 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.surface,
   },
   reactionCount: {
+    fontFamily: "Outfit_600SemiBold",
+    fontSize: 12,
+    color: Colors.dark.textMuted,
+  },
+  mediaImage: {
+    width: "100%",
+    height: 240,
+    borderRadius: 12,
+    marginBottom: 12,
+    backgroundColor: Colors.dark.surface,
+  },
+  videoPlaceholder: {
+    position: "relative",
+    marginBottom: 12,
+  },
+  videoContainer: {
+    position: "relative",
+  },
+  videoOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 12,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  commentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.surface,
+  },
+  commentButtonActive: {
+    backgroundColor: Colors.dark.primary + "20",
+  },
+  commentCount: {
     fontFamily: "Outfit_600SemiBold",
     fontSize: 12,
     color: Colors.dark.textMuted,

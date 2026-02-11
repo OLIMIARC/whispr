@@ -4,6 +4,7 @@ import {
   Confession,
   Crush,
   MarketItem,
+  Comment,
   getUserProfile,
   createUserProfile,
   updateUserProfile,
@@ -20,6 +21,9 @@ import {
   addMarketItem as addMarketItemStorage,
   deleteMarketItem as deleteMarketItemStorage,
   toggleSold as toggleSoldStorage,
+  getComments,
+  addComment as addCommentStorage,
+  deleteComment as deleteCommentStorage,
   isAfterDarkHours,
   seedSampleData,
 } from "./storage";
@@ -40,6 +44,8 @@ interface AppContextValue {
   addMarketItem: (data: Omit<MarketItem, "id" | "createdAt" | "isSold">) => Promise<boolean>;
   deleteMarketItem: (itemId: string) => Promise<void>;
   toggleSold: (itemId: string) => Promise<void>;
+  addComment: (data: Omit<Comment, "id" | "createdAt" | "likes">) => Promise<Comment | null>;
+  deleteComment: (commentId: string, parentId: string, parentType: "confession" | "market") => Promise<void>;
   refreshData: () => Promise<void>;
   regenerateProfile: () => Promise<void>;
 }
@@ -207,6 +213,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfile(updated);
   }, []);
 
+  const handleAddComment = useCallback(async (data: Omit<Comment, "id" | "createdAt" | "likes">) => {
+    const freshProfile = await getUserProfile();
+    if (!freshProfile) return null;
+
+    // Ensure the comment has the current user's details
+    const commentData = {
+      ...data,
+      authorId: freshProfile.id,
+      authorAlias: freshProfile.alias,
+      authorAvatarIndex: freshProfile.avatarIndex,
+      authorKarma: freshProfile.karma,
+    };
+
+    const newComment = await addCommentStorage(commentData);
+    if (!newComment) return null;
+
+    // Update karma
+    const updatedProfile = await updateUserProfile({ karma: freshProfile.karma + 1 });
+    setProfile(updatedProfile);
+
+    // Update parent's comment count in state if it's a confession
+    if (data.parentType === "confession") {
+      setConfessions(prev => prev.map(c =>
+        c.id === data.parentId
+          ? { ...c, commentCount: c.commentCount + 1 }
+          : c
+      ));
+    }
+
+    return newComment;
+  }, []);
+
+  const handleDeleteComment = useCallback(async (commentId: string, parentId: string, parentType: "confession" | "market") => {
+    await deleteCommentStorage(commentId, parentId, parentType);
+
+    // Update parent's comment count in state if it's a confession
+    if (parentType === "confession") {
+      setConfessions(prev => prev.map(c =>
+        c.id === parentId
+          ? { ...c, commentCount: Math.max(0, c.commentCount - 1) }
+          : c
+      ));
+    }
+  }, []);
+
   const value = useMemo(() => ({
     profile,
     confessions,
@@ -223,12 +274,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addMarketItem: handleAddMarketItem,
     deleteMarketItem: handleDeleteMarketItem,
     toggleSold: handleToggleSold,
+    addComment: handleAddComment,
+    deleteComment: handleDeleteComment,
     refreshData,
     regenerateProfile: handleRegenerateProfile,
   }), [profile, confessions, crushes, marketItems, isAfterDark, isLoading,
     handleAddConfession, handleDeleteConfession, handleToggleReaction,
     handleSendCrush, handleDeleteCrush, handleRevealCrush,
     handleAddMarketItem, handleDeleteMarketItem, handleToggleSold,
+    handleAddComment, handleDeleteComment,
     refreshData, handleRegenerateProfile]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

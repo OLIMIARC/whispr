@@ -8,9 +8,14 @@ import {
   Modal,
   StyleSheet,
   Platform,
+  Alert,
   RefreshControl,
   KeyboardAvoidingView,
+  ScrollView,
+  Image,
 } from "react-native";
+import { Video, ResizeMode } from "expo-av";
+import { getApiUrl } from "@/lib/api-config";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -18,6 +23,7 @@ import Animated, { FadeIn, SlideInUp } from "react-native-reanimated";
 import Colors from "@/constants/colors";
 import { useApp } from "@/lib/app-context";
 import ConfessionCard from "@/components/ConfessionCard";
+import MediaPicker, { type SelectedMedia } from "@/components/MediaPicker";
 import type { Confession } from "@/lib/storage";
 
 type SortMode = "trending" | "recent";
@@ -48,7 +54,9 @@ export default function FeedScreen() {
   const [showCompose, setShowCompose] = useState(false);
   const [composeText, setComposeText] = useState("");
   const [composeCategory, setComposeCategory] = useState<Confession["category"]>("confession");
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
 
   const sortedConfessions = useMemo(() => {
     let filtered = filterCategory === "all"
@@ -71,19 +79,88 @@ export default function FeedScreen() {
     setRefreshing(false);
   }, [refreshData]);
 
+  const uploadMedia = async (media: SelectedMedia): Promise<{ url: string; thumbnail?: string } | null> => {
+    try {
+      const formData = new FormData();
+      const file: any = {
+        uri: media.uri,
+        type: media.type === "video" ? "video/mp4" : "image/jpeg",
+        name: media.type === "video" ? "video.mp4" : "image.jpg",
+      };
+      formData.append(media.type, file);
+
+      const endpoint = media.type === "video" ? "/api/upload/video" : "/api/upload/image";
+      const apiUrl = getApiUrl();
+      const targetUrl = `${apiUrl}${endpoint}`;
+      console.log("Attempting upload to:", targetUrl);
+
+      const response = await fetch(targetUrl, {
+        method: "POST",
+        body: formData,
+        headers: {
+          // Bypass simple tunnel warnings
+          "bypass-tunnel-reminder": "true",
+          "ngrok-skip-browser-warning": "true",
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Upload failed");
+      }
+      return await response.json();
+    } catch (error) {
+      console.error("Upload error:", error);
+      Alert.alert("Upload Failed", "Could not upload media. Please try again.");
+      return null;
+    }
+  };
+
   const handlePost = async () => {
-    if (!composeText.trim() || !profile) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await addConfession({
-      content: composeText.trim(),
-      authorId: profile.id,
-      authorAlias: profile.alias,
-      authorAvatarIndex: profile.avatarIndex,
-      authorKarma: profile.karma,
-      category: composeCategory,
-      isAfterDark: composeCategory === "after-dark",
-    });
+    if (!composeText.trim() || !profile || isPosting) return;
+    setIsPosting(true);
+    try {
+      let mediaUrl: string | undefined;
+      let mediaThumbnail: string | undefined;
+      let mediaType: "image" | "video" | undefined;
+
+      // Upload media if selected
+      if (selectedMedia) {
+        const uploaded = await uploadMedia(selectedMedia);
+        if (!uploaded) {
+          setIsPosting(false);
+          return;
+        }
+        mediaUrl = uploaded.url;
+        mediaThumbnail = uploaded.thumbnail;
+        mediaType = selectedMedia.type;
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await addConfession({
+        content: composeText.trim(),
+        authorId: profile.id,
+        authorAlias: profile.alias,
+        authorAvatarIndex: profile.avatarIndex,
+        authorKarma: profile.karma,
+        category: composeCategory,
+        isAfterDark: composeCategory === "after-dark",
+        mediaUrl,
+        mediaType,
+        mediaThumbnail,
+      } as any);
+      setComposeText("");
+      setSelectedMedia(null);
+      setShowCompose(false);
+    } finally {
+      setIsPosting(false);
+    }
+  };
+
+  const handleCloseCompose = () => {
     setComposeText("");
+    setComposeCategory("confession");
+    setSelectedMedia(null);
     setShowCompose(false);
   };
 
@@ -168,6 +245,8 @@ export default function FeedScreen() {
           <ConfessionCard
             confession={item}
             userId={profile?.id || ""}
+            userAlias={profile?.alias || "Anonymous"}
+            userAvatar={profile?.avatarIndex || 0}
             onReaction={toggleReaction}
             onDelete={deleteConfession}
             isAfterDark={isAfterDark}
@@ -189,53 +268,128 @@ export default function FeedScreen() {
 
       <Modal visible={showCompose} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowCompose(false)} />
+          <Pressable style={styles.modalBackdrop} onPress={handleCloseCompose} />
           <Animated.View entering={SlideInUp.duration(300)} style={[styles.composeSheet, { paddingBottom: (Platform.OS === "web" ? 34 : insets.bottom) + 16 }]}>
             <View style={styles.composeHandle} />
             <View style={styles.composeHeader}>
-              <Pressable onPress={() => setShowCompose(false)}>
+              <Pressable onPress={handleCloseCompose} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
                 <Ionicons name="close" size={24} color={Colors.dark.textSecondary} />
               </Pressable>
               <Text style={styles.composeTitle}>New Post</Text>
               <Pressable
                 onPress={handlePost}
-                disabled={!composeText.trim()}
-                style={[styles.postButton, !composeText.trim() && { opacity: 0.4 }]}
+                disabled={(!composeText.trim() && !selectedMedia) || isPosting}
+                style={({ pressed }) => [
+                  styles.postButton,
+                  ((!composeText.trim() && !selectedMedia) || isPosting) && { opacity: 0.4 },
+                  pressed && !((!composeText.trim() && !selectedMedia) || isPosting) && { opacity: 0.8 }
+                ]}
               >
-                <Text style={styles.postButtonText}>Post</Text>
+                {isPosting ? (
+                  <Text style={styles.postButtonText}>Posting...</Text>
+                ) : (
+                  <Text style={styles.postButtonText}>Post</Text>
+                )}
               </Pressable>
             </View>
 
-            <FlatList
-              horizontal
-              data={POST_CATEGORIES}
-              keyExtractor={(item) => item.key}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.composeCategoryList}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => { setComposeCategory(item.key); Haptics.selectionAsync(); }}
-                  style={[styles.composeCategoryChip, composeCategory === item.key && styles.composeCategoryChipActive]}
-                >
-                  <Ionicons name={item.icon} size={14} color={composeCategory === item.key ? Colors.dark.text : Colors.dark.textMuted} />
-                  <Text style={[styles.composeCategoryText, composeCategory === item.key && styles.composeCategoryTextActive]}>
-                    {item.label}
-                  </Text>
-                </Pressable>
-              )}
-            />
+            <ScrollView
+              style={styles.composeContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <FlatList
+                horizontal
+                data={POST_CATEGORIES}
+                keyExtractor={(item) => item.key}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.composeCategoryList}
+                renderItem={({ item }) => (
+                  <Pressable
+                    onPress={() => { setComposeCategory(item.key); Haptics.selectionAsync(); }}
+                    style={[styles.composeCategoryChip, composeCategory === item.key && styles.composeCategoryChipActive]}
+                  >
+                    <Ionicons name={item.icon} size={14} color={composeCategory === item.key ? Colors.dark.text : Colors.dark.textMuted} />
+                    <Text style={[styles.composeCategoryText, composeCategory === item.key && styles.composeCategoryTextActive]}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                )}
+              />
 
-            <TextInput
-              style={styles.composeInput}
-              placeholder="What's on your mind? It's anonymous..."
-              placeholderTextColor={Colors.dark.textMuted}
-              multiline
-              value={composeText}
-              onChangeText={setComposeText}
-              maxLength={500}
-              autoFocus
-            />
-            <Text style={styles.charCount}>{composeText.length}/500</Text>
+              {/* Input Area */}
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.composeInput}
+                  placeholder="What's on your mind? It's anonymous..."
+                  placeholderTextColor={Colors.dark.textMuted}
+                  multiline
+                  value={composeText}
+                  onChangeText={setComposeText}
+                  maxLength={500}
+                  autoFocus
+                />
+              </View>
+
+              {/* Media Preview Below Input */}
+              {selectedMedia && (
+                <View style={[
+                  styles.mediaPreviewBlock,
+                  {
+                    marginTop: 12,
+                    marginBottom: 0,
+                    // If we have dimensions, calculate aspect ratio, otherwise default to 16/9
+                    aspectRatio: (selectedMedia.width && selectedMedia.height)
+                      ? selectedMedia.width / selectedMedia.height
+                      : 16 / 9
+                  }
+                ]}>
+                  {selectedMedia.type === "image" ? (
+                    <Image
+                      source={{ uri: selectedMedia.uri }}
+                      style={styles.previewImage}
+                      resizeMode="cover" // Cover is fine if we set the container aspect ratio to match the image
+                    />
+                  ) : (
+                    <Video
+                      source={{ uri: selectedMedia.uri }}
+                      style={styles.previewVideo}
+                      shouldPlay
+                      isLooping
+                      isMuted
+                      resizeMode={ResizeMode.COVER}
+                    />
+                  )}
+                  <Pressable
+                    style={styles.removeMediaButton}
+                    onPress={() => setSelectedMedia(null)}
+                  >
+                    <Ionicons name="close-circle" size={28} color="#FF5252" />
+                  </Pressable>
+                </View>
+              )}
+
+              {/* Media Picker / Toolbar */}
+              <View style={styles.toolbarContainer}>
+                {!selectedMedia && (
+                  <MediaPicker
+                    selectedMedia={selectedMedia}
+                    onMediaSelected={setSelectedMedia}
+                    allowVideo={true}
+                    maxVideoDuration={30}
+                    variant="icon"
+                  />
+                )}
+              </View>
+
+              <Text style={[
+                styles.charCount,
+                composeText.length >= 490 && { color: "#FF5252" },
+                composeText.length >= 450 && composeText.length < 490 && { color: "#FFA726" },
+              ]}>
+                {composeText.length}/500
+              </Text>
+            </ScrollView>
           </Animated.View>
         </KeyboardAvoidingView>
       </Modal>
@@ -368,7 +522,11 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
     paddingTop: 8,
-    maxHeight: "80%",
+    height: "85%",
+  },
+  composeContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   composeHandle: {
     width: 36,
@@ -428,9 +586,70 @@ const styles = StyleSheet.create({
     fontFamily: "Outfit_400Regular",
     fontSize: 16,
     color: Colors.dark.text,
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.borderLight,
+    padding: 12,
     minHeight: 120,
     textAlignVertical: "top",
-    paddingTop: 0,
+    flex: 1,
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  inputContainer: {
+    flex: 1,
+    position: "relative",
+  },
+  composeInputWithMedia: {
+    minHeight: 100,
+  },
+  mediaPreviewBlock: {
+    width: "100%",
+    // height: 200, <-- Removed fixed height to allow aspectRatio to control it
+    borderRadius: 12,
+    overflow: "hidden",
+    marginBottom: 12,
+    backgroundColor: "#000",
+    position: "relative",
+  },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  toolbarContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.dark.borderLight,
+    paddingTop: 12,
+  },
+  previewVideo: {
+    width: "100%",
+    height: "100%",
+  },
+  removeMediaButton: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderRadius: 14,
+  },
+  mediaIconButton: {
+    position: "absolute",
+    bottom: 12,
+    right: 12,
+    padding: 8,
+    borderRadius: 8,
+  },
+  bottomRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   charCount: {
     fontFamily: "Outfit_400Regular",

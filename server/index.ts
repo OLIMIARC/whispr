@@ -1,6 +1,9 @@
+import "dotenv/config";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerMediaRoutes } from "./media-routes";
+import { registerCommentRoutes } from "./comment-routes";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -199,6 +202,7 @@ function configureExpoAndLanding(app: express.Application) {
   });
 
   app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
+  app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
   app.use(express.static(path.resolve(process.cwd(), "static-build")));
 
   log("Expo routing: Checking expo-platform header on / and /manifest");
@@ -232,19 +236,16 @@ function setupErrorHandler(app: express.Application) {
 
   configureExpoAndLanding(app);
 
+  // Register media and comment routes
+  registerMediaRoutes(app);
+  registerCommentRoutes(app);
+
   const server = await registerRoutes(app);
 
   setupErrorHandler(app);
 
   const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`express server serving on port ${port}`);
-    },
-  );
+  server.listen(port, "0.0.0.0", () => {
+    log(`✓ Backend API running on http://0.0.0.0:${port}`);
+  });
 })();
